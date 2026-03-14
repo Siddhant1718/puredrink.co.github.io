@@ -125,35 +125,51 @@ document.head.appendChild(style);
 console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font-size:16px;font-weight:bold;');
 
 // ══════════════════════════════════════════
-// AUTOPLAY IMAGE SEQUENCE — Canvas Engine
+// AUTOPLAY IMAGE SEQUENCE — Sprite Sheet Engine
+// 280 frames packed into 5 sprite sheets (56 frames each)
+// Grid: 10 cols × up to 6 rows, each cell 480×270 px
 // ══════════════════════════════════════════
 (function () {
   const TOTAL_FRAMES = 280;
   const FPS = 24;
   const FRAME_INTERVAL = 1000 / FPS;
-  const FRAME_PATH = (n) => `frames/ezgif-frame-${String(n).padStart(3, '0')}.jpg`;
+
+  // Sprite sheet config
+  const SPRITE_FRAMES = 56;   // frames per sheet
+  const SPRITE_COLS = 10;   // columns per sheet
+  const CELL_W = 480;  // px per cell (width)
+  const CELL_H = 270;  // px per cell (height)
+  const TOTAL_SHEETS = 5;
 
   const canvas = document.getElementById('hero-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  // High-quality bicubic upscaling for crisp frame rendering
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  const loaderBar = document.getElementById('seq-loader-bar');
-  const loader = document.getElementById('seq-loader');
 
-  // ── Cover-fit draw ───────────────────────
   let currentFrame = 0;
 
-  function renderFrame(index) {
-    const img = images[index];
-    if (!img || !img.complete || !img.naturalWidth) return;
+  // ── Draw one frame from its sprite sheet ──
+  function renderFrame(frameIndex) {
+    const sheetIndex = Math.floor(frameIndex / SPRITE_FRAMES);
+    const localFrame = frameIndex % SPRITE_FRAMES;
+    const sprite = sprites[sheetIndex];
+    if (!sprite || !sprite.complete || !sprite.naturalWidth) return;
+
+    const col = localFrame % SPRITE_COLS;
+    const row = Math.floor(localFrame / SPRITE_COLS);
+    const sx = col * CELL_W;
+    const sy = row * CELL_H;
+
     const cw = canvas.width, ch = canvas.height;
-    const iw = img.naturalWidth, ih = img.naturalHeight;
-    const scale = Math.max(cw / iw, ch / ih);
-    const dw = iw * scale, dh = ih * scale;
+    // Cover-fit: scale to fill viewport
+    const scaleX = cw / CELL_W, scaleY = ch / CELL_H;
+    const scale = Math.max(scaleX, scaleY);
+    const dw = CELL_W * scale, dh = CELL_H * scale;
+    const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
+
     ctx.clearRect(0, 0, cw, ch);
-    ctx.drawImage(img, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+    ctx.drawImage(sprite, sx, sy, CELL_W, CELL_H, dx, dy, dw, dh);
   }
 
   // ── Resize canvas to viewport ────────────
@@ -164,73 +180,42 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
   }
   window.addEventListener('resize', resizeCanvas, { passive: true });
 
-  // ── Preload all frames ───────────────────
-  const images = new Array(TOTAL_FRAMES);
-  let loadedCount = 0;
+  // ── Load all 5 sprite sheets ─────────────
+  const sprites = new Array(TOTAL_SHEETS);
+  let loadedSheets = 0;
   let hasStartedPlayback = false;
 
-  function loadImages() {
-    // Let the user scroll immediately
+  function loadSprites() {
     document.body.style.overflow = '';
 
-    let currentIndex = 0;
-    const BATCH_SIZE = 10; // Load 10 frames at a time to prevent server throttling
+    for (let s = 0; s < TOTAL_SHEETS; s++) {
+      const img = new Image();
 
-    function loadNextBatch() {
-      if (currentIndex >= TOTAL_FRAMES) return;
+      img.onload = () => {
+        loadedSheets++;
+        // Render first frame as soon as sheet 0 is ready
+        if (s === 0) { resizeCanvas(); }
+        // Start playback once the first sheet is loaded
+        if (loadedSheets >= 1 && !hasStartedPlayback) {
+          hasStartedPlayback = true;
+          startPlayback();
+        }
+      };
+      img.onerror = () => {
+        loadedSheets++;
+        if (loadedSheets >= 1 && !hasStartedPlayback) {
+          hasStartedPlayback = true;
+          startPlayback();
+        }
+      };
 
-      const targetIndex = Math.min(currentIndex + BATCH_SIZE, TOTAL_FRAMES);
-      let batchLoadedCount = 0;
-      const expectedInBatch = targetIndex - currentIndex;
-
-      for (let i = currentIndex; i < targetIndex; i++) {
-        const img = new Image();
-
-        const handleLoadOrError = () => {
-          loadedCount++;
-          batchLoadedCount++;
-
-          // Show first frame immediately in background
-          if (i === 0) { resizeCanvas(); }
-
-          // Update progress bar
-          if (loaderBar) {
-            loaderBar.style.width = Math.min(((loadedCount / 40) * 100), 100) + '%';
-          }
-
-          // Start playback early after a buffer of 2 frames to stream the rest
-          if (loadedCount >= 2 && !hasStartedPlayback) {
-            hasStartedPlayback = true;
-            startPlayback();
-          }
-
-          // If this batch is fully loaded, trigger the next batch
-          if (batchLoadedCount === expectedInBatch) {
-            currentIndex = targetIndex;
-            loadNextBatch();
-          }
-        };
-
-        img.onload = handleLoadOrError;
-        img.onerror = handleLoadOrError;
-
-        img.src = FRAME_PATH(i + 1);
-        images[i] = img;
-      }
+      img.src = `sprites/sprite_${s}.jpg`;
+      sprites[s] = img;
     }
-
-    loadNextBatch();
   }
 
   // ── Autoplay loop ────────────────────────
   function startPlayback() {
-    // Fade out loader overlay
-    if (loader) {
-      loader.style.transition = 'opacity 0.6s ease';
-      loader.style.opacity = '0';
-      setTimeout(() => { if (loader) loader.style.display = 'none'; }, 650);
-    }
-
     currentFrame = 0;
     let lastTime = performance.now();
 
@@ -242,67 +227,50 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
           currentFrame++;
           requestAnimationFrame(playLoop);
         } else {
-          // ── Sequence complete ─────────────
           onSequenceComplete();
         }
       } else {
         requestAnimationFrame(playLoop);
       }
     }
-
     requestAnimationFrame(playLoop);
   }
 
   // ── After last frame: show tagline → reveal site ─
   function onSequenceComplete() {
-    // Show tagline text
     const tagline = document.getElementById('hero-tagline');
-    if (tagline) {
-      requestAnimationFrame(() => tagline.classList.add('seq-visible'));
-    }
+    if (tagline) requestAnimationFrame(() => tagline.classList.add('seq-visible'));
 
-    // Fade background to black
     const heroCanvas = document.getElementById('hero-canvas');
     if (heroCanvas) {
       heroCanvas.style.transition = 'opacity 0.8s ease';
       heroCanvas.style.opacity = '0';
     }
 
-    // After 0.2s reveal the rest of the page
     setTimeout(() => {
       document.body.classList.remove('seq-playing');
       setupCanvasInteractive();
     }, 200);
   }
 
-  // ── Make the video frame interactive with cursor ──
+  // ── Cursor parallax after sequence ends ──
   function setupCanvasInteractive() {
-    let curX = 0, curY = 0;
-    let lerpX = 0, lerpY = 0;
-
+    let curX = 0, curY = 0, lerpX = 0, lerpY = 0;
     window.addEventListener('mousemove', (e) => {
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
-      // Calculate offset based on distance from center
-      curX = ((e.clientX - cx) / cx) * -16; // Move in opposite direction slightly
+      const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+      curX = ((e.clientX - cx) / cx) * -16;
       curY = ((e.clientY - cy) / cy) * -12;
     }, { passive: true });
 
     function animateInteractive() {
-      // Smooth lerp
       lerpX += (curX - lerpX) * 0.08;
       lerpY += (curY - lerpY) * 0.08;
-
-      // Scale slightly up (1.04) so we don't see black borders when shifting
       canvas.style.transform = `scale(1.04) translate(${lerpX}px, ${lerpY}px)`;
       requestAnimationFrame(animateInteractive);
     }
 
-    // Set initial scale to hide borders right away
-    canvas.style.transition = 'transform 0.4s ease, opacity 0.8s ease'; // preserve opacity transition
+    canvas.style.transition = 'transform 0.4s ease, opacity 0.8s ease';
     canvas.style.transform = `scale(1.04) translate(0px, 0px)`;
-
-    // Wait for transition, then remove it and start the fast raf loop
     setTimeout(() => {
       canvas.style.transition = 'opacity 0.8s ease';
       requestAnimationFrame(animateInteractive);
@@ -318,32 +286,27 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
         if (entry.isIntersecting) {
-          // Play animation
           demoCard.classList.add('ma-play');
-
-          // Animation takes exactly 5 seconds to complete based on CSS timings.
-          // Fade out the animation block instantly after.
           setTimeout(() => {
             demoCard.classList.add('ma-fade-out');
-
             setTimeout(() => {
               demoCard.style.display = 'none';
               techGrid.classList.add('tech-visible');
-            }, 1000); // 1s for fade out to complete
-          }, 5500); // 5.5s delay to let hover out finish
-
+            }, 1000);
+          }, 5500);
           observer.unobserve(entry.target);
         }
       });
-    }, { threshold: 0.5 }); // Trigger when 50% visible
+    }, { threshold: 0.5 });
 
     observer.observe(demoCard);
+
   }
 
   // ── Boot ─────────────────────────────────
   document.body.classList.add('seq-playing');
   resizeCanvas();
-  loadImages();
+  loadSprites();
   setupMachineAnimation();
 })();
 
