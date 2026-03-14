@@ -125,35 +125,53 @@ document.head.appendChild(style);
 console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font-size:16px;font-weight:bold;');
 
 // ══════════════════════════════════════════
-// AUTOPLAY IMAGE SEQUENCE — Canvas Engine
+// AUTOPLAY IMAGE SEQUENCE — Sprite Sheet Engine
 // ══════════════════════════════════════════
 (function () {
   const TOTAL_FRAMES = 280;
   const FPS = 24;
   const FRAME_INTERVAL = 1000 / FPS;
-  const FRAME_PATH = (n) => `frames/ezgif-frame-${String(n).padStart(3, '0')}.jpg`;
+
+  // Sprite sheet layout: 10 cols × 6 rows, each cell 480×270
+  const SPRITE_COLS = 10;
+  const CELL_W = 480;
+  const CELL_H = 270;
+  const FRAMES_PER_SPRITE = 60;
+  const SPRITE_PATHS = [
+    'sprites/sprite_0.jpg',
+    'sprites/sprite_1.jpg',
+    'sprites/sprite_2.jpg',
+    'sprites/sprite_3.jpg',
+    'sprites/sprite_4.jpg'
+  ];
 
   const canvas = document.getElementById('hero-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  // High-quality bicubic upscaling for crisp frame rendering
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
   const loaderBar = document.getElementById('seq-loader-bar');
   const loader = document.getElementById('seq-loader');
 
-  // ── Cover-fit draw ───────────────────────
+  // ── Cover-fit draw from sprite sheet ─────
   let currentFrame = 0;
 
   function renderFrame(index) {
-    const img = images[index];
+    const spriteIndex = Math.floor(index / FRAMES_PER_SPRITE);
+    const img = sprites[spriteIndex];
     if (!img || !img.complete || !img.naturalWidth) return;
+
+    const localFrame = index - spriteIndex * FRAMES_PER_SPRITE;
+    const col = localFrame % SPRITE_COLS;
+    const row = Math.floor(localFrame / SPRITE_COLS);
+    const sx = col * CELL_W;
+    const sy = row * CELL_H;
+
     const cw = canvas.width, ch = canvas.height;
-    const iw = img.naturalWidth, ih = img.naturalHeight;
-    const scale = Math.max(cw / iw, ch / ih);
-    const dw = iw * scale, dh = ih * scale;
-    ctx.clearRect(0, 0, cw, ch);
-    ctx.drawImage(img, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+    // Cover-fit: scale the cell to fill the canvas
+    const scale = Math.max(cw / CELL_W, ch / CELL_H);
+    const dw = CELL_W * scale, dh = CELL_H * scale;
+    const dx = (cw - dw) / 2, dy = (ch - dh) / 2;
+
+    ctx.drawImage(img, sx, sy, CELL_W, CELL_H, dx, dy, dw, dh);
   }
 
   // ── Resize canvas to viewport ────────────
@@ -164,65 +182,41 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
   }
   window.addEventListener('resize', resizeCanvas, { passive: true });
 
-  // ── Preload all frames ───────────────────
-  const images = new Array(TOTAL_FRAMES);
+  // ── Preload sprite sheets ────────────────
+  const sprites = new Array(SPRITE_PATHS.length);
   let loadedCount = 0;
-  let hasStartedPlayback = false;
 
-  function loadImages() {
-    // Let the user scroll immediately
+  function loadSprites() {
     document.body.style.overflow = '';
 
-    let currentIndex = 0;
-    const BATCH_SIZE = 10; // Load 10 frames at a time to prevent server throttling
+    SPRITE_PATHS.forEach((src, i) => {
+      const img = new Image();
+      img.onload = () => {
+        loadedCount++;
 
-    function loadNextBatch() {
-      if (currentIndex >= TOTAL_FRAMES) return;
+        // Show first frame as soon as first sprite loads
+        if (i === 0) resizeCanvas();
 
-      const targetIndex = Math.min(currentIndex + BATCH_SIZE, TOTAL_FRAMES);
-      let batchLoadedCount = 0;
-      const expectedInBatch = targetIndex - currentIndex;
+        // Update progress bar
+        if (loaderBar) {
+          loaderBar.style.width = ((loadedCount / SPRITE_PATHS.length) * 100) + '%';
+        }
 
-      for (let i = currentIndex; i < targetIndex; i++) {
-        const img = new Image();
-
-        const handleLoadOrError = () => {
-          loadedCount++;
-          batchLoadedCount++;
-
-          // Show first frame immediately in background
-          if (i === 0) { resizeCanvas(); }
-
-          // Update progress bar
-          if (loaderBar) {
-            loaderBar.style.width = Math.min(((loadedCount / 40) * 100), 100) + '%';
-          }
-
-          // Start playback early after a buffer of 2 frames to stream the rest
-          if (loadedCount >= 2 && !hasStartedPlayback) {
-            hasStartedPlayback = true;
-            startPlayback();
-          }
-
-          // If this batch is fully loaded, trigger the next batch
-          if (batchLoadedCount === expectedInBatch) {
-            currentIndex = targetIndex;
-            loadNextBatch();
-          }
-        };
-
-        img.onload = handleLoadOrError;
-        img.onerror = handleLoadOrError;
-
-        img.src = FRAME_PATH(i + 1);
-        images[i] = img;
-      }
-    }
-
-    loadNextBatch();
+        // Start playback once all sprites are loaded
+        if (loadedCount === SPRITE_PATHS.length) {
+          startPlayback();
+        }
+      };
+      img.onerror = () => {
+        loadedCount++;
+        if (loadedCount === SPRITE_PATHS.length) startPlayback();
+      };
+      img.src = src;
+      sprites[i] = img;
+    });
   }
 
-  // ── Autoplay loop ────────────────────────
+  // ── Autoplay loop with drift correction ──
   function startPlayback() {
     // Fade out loader overlay
     if (loader) {
@@ -232,22 +226,28 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
     }
 
     currentFrame = 0;
-    let lastTime = performance.now();
+    const startTime = performance.now();
 
     function playLoop(now) {
-      if (now - lastTime >= FRAME_INTERVAL) {
-        lastTime = now;
+      // Calculate which frame should be showing based on elapsed time
+      const elapsed = now - startTime;
+      const targetFrame = Math.floor(elapsed / FRAME_INTERVAL);
+
+      if (targetFrame >= TOTAL_FRAMES) {
+        // Render last frame and complete
+        currentFrame = TOTAL_FRAMES - 1;
         renderFrame(currentFrame);
-        if (currentFrame < TOTAL_FRAMES - 1) {
-          currentFrame++;
-          requestAnimationFrame(playLoop);
-        } else {
-          // ── Sequence complete ─────────────
-          onSequenceComplete();
-        }
-      } else {
-        requestAnimationFrame(playLoop);
+        onSequenceComplete();
+        return;
       }
+
+      // Skip ahead if behind schedule (prevents slowdown accumulation)
+      if (targetFrame > currentFrame) {
+        currentFrame = targetFrame;
+        renderFrame(currentFrame);
+      }
+
+      requestAnimationFrame(playLoop);
     }
 
     requestAnimationFrame(playLoop);
@@ -335,7 +335,7 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
   // ── Boot ─────────────────────────────────
   document.body.classList.add('seq-playing');
   resizeCanvas();
-  loadImages();
+  loadSprites();
   setupMachineAnimation();
 })();
 
