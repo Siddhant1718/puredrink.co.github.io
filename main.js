@@ -131,7 +131,12 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
   const TOTAL_FRAMES = 280;
   const FPS = 24;
   const FRAME_INTERVAL = 1000 / FPS;
-  const FRAME_PATH = (n) => `frames/ezgif-frame-${String(n).padStart(3, '0')}.jpg`;
+  const FRAME_PATH = (n) => {
+    const name = `ezgif-frame-${String(n).padStart(3, '0')}.jpg`;
+    if (n <= 100) return `0-100/${name}`;
+    if (n <= 200) return `101-200/${name}`;
+    return `201-280/${name}`;
+  };
 
   const canvas = document.getElementById('hero-canvas');
   if (!canvas) return;
@@ -168,13 +173,14 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
   const images = new Array(TOTAL_FRAMES);
   let loadedCount = 0;
   let hasStartedPlayback = false;
+  const BUFFER_FRAMES = 30; // Buffer enough frames before starting playback
 
   function loadImages() {
     // Let the user scroll immediately
     document.body.style.overflow = '';
 
     let currentIndex = 0;
-    const BATCH_SIZE = 10; // Load 10 frames at a time to prevent server throttling
+    const BATCH_SIZE = 20; // Load 20 frames at a time for faster buffering
 
     function loadNextBatch() {
       if (currentIndex >= TOTAL_FRAMES) return;
@@ -191,15 +197,15 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
           batchLoadedCount++;
 
           // Show first frame immediately in background
-          if (i === 0) { resizeCanvas(); }
+          if (i === 0 && img.complete && img.naturalWidth) { resizeCanvas(); }
 
           // Update progress bar
           if (loaderBar) {
-            loaderBar.style.width = Math.min(((loadedCount / 40) * 100), 100) + '%';
+            loaderBar.style.width = Math.min(((loadedCount / BUFFER_FRAMES) * 100), 100) + '%';
           }
 
-          // Start playback early after a buffer of 2 frames to stream the rest
-          if (loadedCount >= 2 && !hasStartedPlayback) {
+          // Start playback after enough frames are buffered
+          if (loadedCount >= BUFFER_FRAMES && !hasStartedPlayback) {
             hasStartedPlayback = true;
             startPlayback();
           }
@@ -232,17 +238,39 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
     }
 
     currentFrame = 0;
-    let lastTime = performance.now();
+    let lastTime = 0;
 
     function playLoop(now) {
-      if (now - lastTime >= FRAME_INTERVAL) {
+      if (lastTime === 0) {
         lastTime = now;
         renderFrame(currentFrame);
+        currentFrame++;
+        requestAnimationFrame(playLoop);
+        return;
+      }
+
+      const elapsed = now - lastTime;
+
+      if (elapsed >= FRAME_INTERVAL) {
+        // Advance by the correct number of frames to stay in sync
+        const framesToAdvance = Math.floor(elapsed / FRAME_INTERVAL);
+        lastTime += framesToAdvance * FRAME_INTERVAL;
+
+        // Find the target frame, but don't skip past unloaded frames
+        let targetFrame = Math.min(currentFrame + framesToAdvance - 1, TOTAL_FRAMES - 1);
+
+        // If the target frame isn't loaded yet, show the last loaded frame
+        while (targetFrame > currentFrame && (!images[targetFrame] || !images[targetFrame].complete || !images[targetFrame].naturalWidth)) {
+          targetFrame--;
+        }
+
+        currentFrame = targetFrame;
+        renderFrame(currentFrame);
+
         if (currentFrame < TOTAL_FRAMES - 1) {
           currentFrame++;
           requestAnimationFrame(playLoop);
         } else {
-          // ── Sequence complete ─────────────
           onSequenceComplete();
         }
       } else {
