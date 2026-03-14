@@ -173,33 +173,53 @@ console.log('%c🍊 Pure Drink Co. — Freshness Redefined', 'color:#FF8C00;font
     // Let the user scroll immediately
     document.body.style.overflow = '';
 
-    for (let i = 0; i < TOTAL_FRAMES; i++) {
-      const img = new Image();
-      img.onload = () => {
-        loadedCount++;
-        // Show first frame immediately in background
-        if (i === 0) { resizeCanvas(); }
-        // Update progress bar (scale to 40 instead of 280 for perceived speed)
-        if (loaderBar) {
-          loaderBar.style.width = Math.min(((loadedCount / 40) * 100), 100) + '%';
-        }
-        // Start playback early after a buffer of 2 frames to stream the rest
-        if (loadedCount >= 2 && !hasStartedPlayback) {
-          hasStartedPlayback = true;
-          startPlayback();
-        }
-      };
-      img.onerror = () => {
-        // Count failures too so we don't stall forever
-        loadedCount++;
-        if (loadedCount >= 2 && !hasStartedPlayback) {
-          hasStartedPlayback = true;
-          startPlayback();
-        }
-      };
-      img.src = FRAME_PATH(i + 1);
-      images[i] = img;
+    let currentIndex = 0;
+    const BATCH_SIZE = 10; // Load 10 frames at a time to prevent server throttling
+
+    function loadNextBatch() {
+      if (currentIndex >= TOTAL_FRAMES) return;
+
+      const targetIndex = Math.min(currentIndex + BATCH_SIZE, TOTAL_FRAMES);
+      let batchLoadedCount = 0;
+      const expectedInBatch = targetIndex - currentIndex;
+
+      for (let i = currentIndex; i < targetIndex; i++) {
+        const img = new Image();
+
+        const handleLoadOrError = () => {
+          loadedCount++;
+          batchLoadedCount++;
+
+          // Show first frame immediately in background
+          if (i === 0) { resizeCanvas(); }
+
+          // Update progress bar
+          if (loaderBar) {
+            loaderBar.style.width = Math.min(((loadedCount / 40) * 100), 100) + '%';
+          }
+
+          // Start playback early after a buffer of 2 frames to stream the rest
+          if (loadedCount >= 2 && !hasStartedPlayback) {
+            hasStartedPlayback = true;
+            startPlayback();
+          }
+
+          // If this batch is fully loaded, trigger the next batch
+          if (batchLoadedCount === expectedInBatch) {
+            currentIndex = targetIndex;
+            loadNextBatch();
+          }
+        };
+
+        img.onload = handleLoadOrError;
+        img.onerror = handleLoadOrError;
+
+        img.src = FRAME_PATH(i + 1);
+        images[i] = img;
+      }
     }
+
+    loadNextBatch();
   }
 
   // ── Autoplay loop ────────────────────────
